@@ -31,14 +31,15 @@ start = timeit.default_timer()
 IMG_MEAN = np.array((104.00698793,116.66876762,122.67891434), dtype=np.float32)
 
 MODEL = 'DeepLab'
-BATCH_SIZE = 10
+# BATCH_SIZE = 10
+BATCH_SIZE = 4
 ITER_SIZE = 1
 NUM_WORKERS = 4
 DATA_DIRECTORY = './dataset/VOC2012'
 DATA_LIST_PATH = './dataset/voc_list/train_aug.txt'
 IGNORE_LABEL = 255
 INPUT_SIZE = '321,321'
-LEARNING_RATE = 2.5e-4
+LEARNING_RATE = 2.5e-4 / 2
 MOMENTUM = 0.9
 NUM_CLASSES = 21
 NUM_STEPS = 20000
@@ -50,7 +51,7 @@ SAVE_PRED_EVERY = 5000
 SNAPSHOT_DIR = './snapshots/'
 WEIGHT_DECAY = 0.0005
 
-LEARNING_RATE_D = 1e-4
+LEARNING_RATE_D = 1e-4 / 2
 LAMBDA_ADV_PRED = 0.1
 
 PARTIAL_DATA=0.5
@@ -210,7 +211,6 @@ def main():
     # only copy the params that exist in current model (caffe-like)
     new_params = model.state_dict().copy()
     for name, param in new_params.items():
-        print name
         if name in saved_state_dict and param.size() == saved_state_dict[name].size():
             new_params[name].copy_(saved_state_dict[name])
             print('copy {}'.format(name))
@@ -256,7 +256,7 @@ def main():
             train_ids = pickle.load(open(args.partial_id))
             print('loading train ids from {}'.format(args.partial_id))
         else:
-            train_ids = range(train_dataset_size)
+            train_ids = [_ for _ in range(0, train_dataset_size)]
             np.random.shuffle(train_ids)
 
         pickle.dump(train_ids, open(osp.join(args.snapshot_dir, 'train_id.pkl'), 'wb'))
@@ -329,10 +329,10 @@ def main():
             # do semi first
             if (args.lambda_semi > 0 or args.lambda_semi_adv > 0 ) and i_iter >= args.semi_start_adv :
                 try:
-                    _, batch = trainloader_remain_iter.next()
+                    _, batch = trainloader_remain_iter.__next__()
                 except:
                     trainloader_remain_iter = enumerate(trainloader_remain)
-                    _, batch = trainloader_remain_iter.next()
+                    _, batch = trainloader_remain_iter.__next__()
 
                 # only access to img
                 images, _, _, _ = batch
@@ -348,10 +348,10 @@ def main():
                 ignore_mask_remain = np.zeros(D_out_sigmoid.shape).astype(np.bool)
 
                 loss_semi_adv = args.lambda_semi_adv * bce_loss(D_out, make_D_label(gt_label, ignore_mask_remain))
-                loss_semi_adv = loss_semi_adv/args.iter_size
+                loss_semi_adv = loss_semi_adv
 
                 #loss_semi_adv.backward()
-                loss_semi_adv_value += loss_semi_adv.data.cpu().numpy()[0]/args.lambda_semi_adv
+                loss_semi_adv_value += loss_semi_adv.data.cpu().numpy() / args.iter_size
 
                 if args.lambda_semi <= 0 or i_iter < args.semi_start:
                     loss_semi_adv.backward()
@@ -373,7 +373,7 @@ def main():
 
                         loss_semi = args.lambda_semi * loss_calc(pred, semi_gt, args.gpu)
                         loss_semi = loss_semi/args.iter_size
-                        loss_semi_value += loss_semi.data.cpu().numpy()[0]/args.lambda_semi
+                        loss_semi_value += loss_semi.data.cpu().numpy()/args.lambda_semi
                         loss_semi += loss_semi_adv
                         loss_semi.backward()
 
@@ -384,10 +384,10 @@ def main():
             # train with source
 
             try:
-                _, batch = trainloader_iter.next()
+                _, batch = trainloader_iter.__next__()
             except:
                 trainloader_iter = enumerate(trainloader)
-                _, batch = trainloader_iter.next()
+                _, batch = trainloader_iter.__next__()
 
             images, labels, _, _ = batch
             images = Variable(images).cuda(args.gpu)
@@ -398,15 +398,15 @@ def main():
 
             D_out = interp(model_D(F.softmax(pred)))
 
-            loss_adv_pred = bce_loss(D_out, make_D_label(gt_label, ignore_mask))
+            loss_adv_pred = args.lambda_adv_pred * bce_loss(D_out, make_D_label(gt_label, ignore_mask))
 
-            loss = loss_seg + args.lambda_adv_pred * loss_adv_pred
+            loss = loss_seg + loss_adv_pred
 
             # proper normalization
             loss = loss/args.iter_size
             loss.backward()
-            loss_seg_value += loss_seg.data.cpu().numpy()[0]/args.iter_size
-            loss_adv_pred_value += loss_adv_pred.data.cpu().numpy()[0]/args.iter_size
+            loss_seg_value += loss_seg.data.cpu().numpy()/args.iter_size
+            loss_adv_pred_value += loss_adv_pred.data.cpu().numpy()/args.iter_size
 
 
             # train D
@@ -426,16 +426,16 @@ def main():
             loss_D = bce_loss(D_out, make_D_label(pred_label, ignore_mask))
             loss_D = loss_D/args.iter_size/2
             loss_D.backward()
-            loss_D_value += loss_D.data.cpu().numpy()[0]
+            loss_D_value += loss_D.data.cpu().numpy()
 
 
             # train with gt
             # get gt labels
             try:
-                _, batch = trainloader_gt_iter.next()
+                _, batch = trainloader_gt_iter.__next__()
             except:
                 trainloader_gt_iter = enumerate(trainloader_gt)
-                _, batch = trainloader_gt_iter.next()
+                _, batch = trainloader_gt_iter.__next__()
 
             _, labels_gt, _, _ = batch
             D_gt_v = Variable(one_hot(labels_gt)).cuda(args.gpu)
@@ -445,7 +445,7 @@ def main():
             loss_D = bce_loss(D_out, make_D_label(gt_label, ignore_mask_gt))
             loss_D = loss_D/args.iter_size/2
             loss_D.backward()
-            loss_D_value += loss_D.data.cpu().numpy()[0]
+            loss_D_value += loss_D.data.cpu().numpy()
 
 
 
@@ -453,21 +453,18 @@ def main():
         optimizer_D.step()
 
         print('exp = {}'.format(args.snapshot_dir))
-        print('iter = {0:8d}/{1:8d}, loss_seg = {2:.3f}, loss_adv_p = {3:.3f}, loss_D = {4:.3f}, loss_semi = {5:.3f}, loss_semi_adv = {6:.3f}'.format(i_iter, args.num_steps, loss_seg_value, loss_adv_pred_value, loss_D_value, loss_semi_value, loss_semi_adv_value))
+        print('iter = {0:8d}/{1:8d}, loss_seg = {2:.6f}, loss_adv_p = {3:.6f}, loss_D = {4:.6f}, loss_semi = {5:.6f}, loss_semi_adv = {6:.6f}'.format(i_iter, args.num_steps, loss_seg_value, loss_adv_pred_value, loss_D_value, loss_semi_value, loss_semi_adv_value))
 
         if i_iter >= args.num_steps-1:
-            print 'save model ...'
             torch.save(model.state_dict(),osp.join(args.snapshot_dir, 'VOC_'+str(args.num_steps)+'.pth'))
             torch.save(model_D.state_dict(),osp.join(args.snapshot_dir, 'VOC_'+str(args.num_steps)+'_D.pth'))
             break
 
         if i_iter % args.save_pred_every == 0 and i_iter!=0:
-            print 'taking snapshot ...'
             torch.save(model.state_dict(),osp.join(args.snapshot_dir, 'VOC_'+str(i_iter)+'.pth'))
             torch.save(model_D.state_dict(),osp.join(args.snapshot_dir, 'VOC_'+str(i_iter)+'_D.pth'))
 
     end = timeit.default_timer()
-    print end-start,'seconds'
 
 if __name__ == '__main__':
     main()
