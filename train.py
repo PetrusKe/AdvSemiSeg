@@ -145,7 +145,7 @@ def get_arguments():
                         help="Regularisation parameter for L2-loss.")
     parser.add_argument("--gpu", type=int, default=0,
                         help="choose gpu device.")
-    parser.add_argument('--save-dir', type=str, default='result')
+    parser.add_argument('--save-dir', type=str, default='results')
 
     return parser.parse_args()
 
@@ -513,14 +513,14 @@ def val(model, gpu):
         output = output.transpose(1,2,0)
         output = np.asarray(np.argmax(output, axis=2), dtype=np.int)
 
-        filename = os.path.join('results', '{}.png'.format(name[0]))
+        filename = os.path.join(args.save_dir, '{}.png'.format(name[0]))
         color_file = Image.fromarray(colorize(output).transpose(1, 2, 0), 'RGB')
         color_file.save(filename)
 
         # show_all(gt, output)
         data_list.append([gt.flatten(), output.flatten()])
 
-    filename = os.path.join('results', 'result.txt')
+    filename = os.path.join(args.save_dir, 'result.txt')
     get_iou(data_list, args.num_classes, filename)
 
 
