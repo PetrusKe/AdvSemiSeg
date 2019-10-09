@@ -21,7 +21,11 @@ from model.discriminator import FCDiscriminator
 from utils.loss import CrossEntropy2d, BCEWithLogitsLoss2d
 from dataset.voc_dataset import VOCDataSet, VOCGTDataSet
 
+from fd import detector
 
+from PIL import Image
+
+import matplotlib.pyplot as plt
 
 import matplotlib.pyplot as plt
 import random
@@ -31,14 +35,14 @@ start = timeit.default_timer()
 IMG_MEAN = np.array((104.00698793,116.66876762,122.67891434), dtype=np.float32)
 
 MODEL = 'DeepLab'
-BATCH_SIZE = 10
+BATCH_SIZE = int(10 / 2)
 ITER_SIZE = 1
 NUM_WORKERS = 4
 DATA_DIRECTORY = './dataset/VOC2012'
 DATA_LIST_PATH = './dataset/voc_list/train_aug.txt'
 IGNORE_LABEL = 255
-INPUT_SIZE = '321,321'
-LEARNING_RATE = 2.5e-4
+INPUT_SIZE = '320,320'
+LEARNING_RATE = 2.5e-4 / 2
 MOMENTUM = 0.9
 NUM_CLASSES = 21
 NUM_STEPS = 20000
@@ -47,21 +51,21 @@ RANDOM_SEED = 1234
 RESTORE_FROM = 'http://vllab1.ucmerced.edu/~whung/adv-semi-seg/resnet101COCO-41f33a49.pth'
 SAVE_NUM_IMAGES = 2
 SAVE_PRED_EVERY = 5000
-SNAPSHOT_DIR = './snapshots/'
+SNAPSHOT_DIR = './snapshots_fd/'
 WEIGHT_DECAY = 0.0005
 
-LEARNING_RATE_D = 1e-4
-LAMBDA_ADV_PRED = 0.1
+LEARNING_RATE_D = 1e-4 # 0.0025
+LAMBDA_ADV_PRED = 1  # ssl for labeled data
 
 PARTIAL_DATA=0.5
 
-SEMI_START=5000
-LAMBDA_SEMI=0.1
-MASK_T=0.2
+SEMI_START=5000 # do not use
+LAMBDA_SEMI=0.1 # do not use
+MASK_T=0.2      # do not use
 
-LAMBDA_SEMI_ADV=0.001
-SEMI_START_ADV=0
-D_REMAIN=True
+LAMBDA_SEMI_ADV=1   # ssl for unlabeled data
+SEMI_START_ADV=0    
+D_REMAIN=True       # do not use
 
 
 def get_arguments():
@@ -191,7 +195,7 @@ def make_D_label(label, ignore_mask):
 
 
 def main():
-
+    # prepare
     h, w = map(int, args.input_size.split(','))
     input_size = (h, w)
 
@@ -222,7 +226,8 @@ def main():
     cudnn.benchmark = True
 
     # init D
-    model_D = FCDiscriminator(num_classes=args.num_classes)
+    model_D = detector.FlawDetector(in_channels=24)
+    # model_D = FCDiscriminator(num_classes=args.num_classes)
     if args.restore_from_D is not None:
         model_D.load_state_dict(torch.load(args.restore_from_D))
     model_D.train()
@@ -290,7 +295,10 @@ def main():
     optimizer_D.zero_grad()
 
     # loss/ bilinear upsampling
-    bce_loss = BCEWithLogitsLoss2d()
+    minimum_loss = detector.MinimumCriterion()
+    detector_loss = detector.FlawDetectorCriterion()
+
+    # bce_loss = BCEWithLogitsLoss2d()
     interp = nn.Upsample(size=(input_size[1], input_size[0]), mode='bilinear')
 
     if version.parse(torch.__version__) >= version.parse('0.4.0'):
@@ -305,7 +313,7 @@ def main():
 
 
     for i_iter in range(args.num_steps):
-
+        
         if i_iter > 0 and i_iter % 1000 == 0:
             val(model, args.gpu)
             model.train()
@@ -345,46 +353,23 @@ def main():
                 pred = interp(model(images))
                 pred_remain = pred.detach()
 
-                D_out = interp(model_D(F.softmax(pred)))
-                D_out_sigmoid = F.sigmoid(D_out).data.cpu().numpy().squeeze(axis=1)
+                D_out = model_D(images, pred)
 
-                ignore_mask_remain = np.zeros(D_out_sigmoid.shape).astype(np.bool)
-
-                loss_semi_adv = args.lambda_semi_adv * bce_loss(D_out, make_D_label(gt_label, ignore_mask_remain))
+                ignore_mask_remain = np.zeros(D_out.shape).astype(np.bool)
+                loss_semi_adv = args.lambda_semi_adv * minimum_loss(D_out)  # ke: SSL loss for unlabeled data
                 loss_semi_adv = loss_semi_adv
 
                 #loss_semi_adv.backward()
                 loss_semi_adv_value += loss_semi_adv.data.cpu().numpy() / args.iter_size
 
-                if args.lambda_semi <= 0 or i_iter < args.semi_start:
-                    loss_semi_adv.backward()
-                    loss_semi_value = 0
-                else:
-                    # produce ignore mask
-                    semi_ignore_mask = (D_out_sigmoid < args.mask_T)
-
-                    semi_gt = pred.data.cpu().numpy().argmax(axis=1)
-                    semi_gt[semi_ignore_mask] = 255
-
-                    semi_ratio = 1.0 - float(semi_ignore_mask.sum())/semi_ignore_mask.size
-                    print('semi ratio: {:.4f}'.format(semi_ratio))
-
-                    if semi_ratio == 0.0:
-                        loss_semi_value += 0
-                    else:
-                        semi_gt = torch.FloatTensor(semi_gt)
-
-                        loss_semi = args.lambda_semi * loss_calc(pred, semi_gt, args.gpu)
-                        loss_semi = loss_semi/args.iter_size
-                        loss_semi_value += loss_semi.data.cpu().numpy()/args.lambda_semi
-                        loss_semi += loss_semi_adv
-                        loss_semi.backward()
+                loss_semi_adv.backward()
+                loss_semi_value = 0
 
             else:
                 loss_semi = None
                 loss_semi_adv = None
 
-            # train with source
+            # train with source (labeled data)
 
             try:
                 _, batch = trainloader_iter.__next__()
@@ -399,9 +384,9 @@ def main():
 
             loss_seg = loss_calc(pred, labels, args.gpu)
 
-            D_out = interp(model_D(F.softmax(pred)))
-
-            loss_adv_pred = args.lambda_adv_pred * bce_loss(D_out, make_D_label(gt_label, ignore_mask))
+            D_out = interp(model_D(images, pred))
+           
+            loss_adv_pred = args.lambda_adv_pred * minimum_loss(D_out)   # ke: SSL loss for labeled data
 
             loss = loss_seg + loss_adv_pred
 
@@ -411,45 +396,44 @@ def main():
             loss_seg_value += loss_seg.data.cpu().numpy()/args.iter_size
             loss_adv_pred_value += loss_adv_pred.data.cpu().numpy()/args.iter_size
 
-
             # train D
 
             # bring back requires_grad
             for param in model_D.parameters():
                 param.requires_grad = True
 
-            # train with pred
+            # train with pred from labeled data
             pred = pred.detach()
 
-            if args.D_remain:
-                pred = torch.cat((pred, pred_remain), 0)
-                ignore_mask = np.concatenate((ignore_mask,ignore_mask_remain), axis = 0)
+            D_out = interp(model_D(images, pred))
 
-            D_out = interp(model_D(F.softmax(pred)))
-            loss_D = bce_loss(D_out, make_D_label(pred_label, ignore_mask))
+            detect_gt = detector.generate_flaw_detector_gt(
+                pred, labels.view(labels.shape[0], 1, labels.shape[1], labels.shape[2]).cuda(args.gpu),
+                NUM_CLASSES, IGNORE_LABEL)
+            loss_D = detector_loss(D_out, detect_gt)
+
             loss_D = loss_D/args.iter_size/2
             loss_D.backward()
             loss_D_value += loss_D.data.cpu().numpy()
 
 
-            # train with gt
-            # get gt labels
-            try:
-                _, batch = trainloader_gt_iter.__next__()
-            except:
-                trainloader_gt_iter = enumerate(trainloader_gt)
-                _, batch = trainloader_gt_iter.__next__()
+            # # train with gt
+            # # get gt labels
+            # try:
+            #     _, batch = trainloader_gt_iter.__next__()
+            # except:
+            #     trainloader_gt_iter = enumerate(trainloader_gt)
+            #     _, batch = trainloader_gt_iter.__next__()
 
-            _, labels_gt, _, _ = batch
-            D_gt_v = Variable(one_hot(labels_gt)).cuda(args.gpu)
-            ignore_mask_gt = (labels_gt.numpy() == 255)
+            # _, labels_gt, _, _ = batch
+            # D_gt_v = Variable(one_hot(labels_gt)).cuda(args.gpu)
+            # ignore_mask_gt = (labels_gt.numpy() == 255)
 
-            D_out = interp(model_D(D_gt_v))
-            loss_D = bce_loss(D_out, make_D_label(gt_label, ignore_mask_gt))
-            loss_D = loss_D/args.iter_size/2
-            loss_D.backward()
-            loss_D_value += loss_D.data.cpu().numpy()
-
+            # D_out = interp(model_D(D_gt_v))
+            # loss_D = bce_loss(D_out, make_D_label(gt_label, ignore_mask_gt))
+            # loss_D = loss_D/args.iter_size/2
+            # loss_D.backward()
+            # loss_D_value += loss_D.data.cpu().numpy()
 
 
         optimizer.step()
@@ -513,7 +497,6 @@ def val(model, gpu):
 
     filename = os.path.join('results_fd', 'result.txt')
     get_iou(data_list, args.num_classes, filename)
-
 
 
 if __name__ == '__main__':
