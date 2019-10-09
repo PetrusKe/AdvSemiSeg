@@ -145,6 +145,8 @@ def get_arguments():
                         help="Regularisation parameter for L2-loss.")
     parser.add_argument("--gpu", type=int, default=0,
                         help="choose gpu device.")
+    parser.add_argument('--save-dir', type=str, default='result')
+
     return parser.parse_args()
 
 args = get_arguments()
@@ -201,6 +203,9 @@ def main():
 
     cudnn.enabled = True
     gpu = args.gpu
+
+    if not os.path.exists(args.save_dir):
+        os.makedirs(args.save_dir)
 
     # create network
     model = Res_Deeplab(num_classes=args.num_classes)

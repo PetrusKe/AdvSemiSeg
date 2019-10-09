@@ -145,6 +145,8 @@ def get_arguments():
                         help="Regularisation parameter for L2-loss.")
     parser.add_argument("--gpu", type=int, default=0,
                         help="choose gpu device.")
+    parser.add_argument('--save-dir', type=str, default='result')
+
     return parser.parse_args()
 
 args = get_arguments()
@@ -201,6 +203,9 @@ def main():
 
     cudnn.enabled = True
     gpu = args.gpu
+
+    if not os.path.exists(args.save_dir):
+        os.makedirs(args.save_dir)
 
     # create network
     model = Res_Deeplab(num_classes=args.num_classes)
@@ -310,7 +315,7 @@ def main():
 
     for i_iter in range(args.num_steps):
 
-        if i_iter > 0 and i_iter % 10 == 0:
+        if i_iter > 0 and i_iter % 1000 == 0:
             val(model, args.gpu)
             model.train()
 
@@ -508,14 +513,14 @@ def val(model, gpu):
         output = output.transpose(1,2,0)
         output = np.asarray(np.argmax(output, axis=2), dtype=np.int)
 
-        filename = os.path.join('results_fd', '{}.png'.format(name[0]))
+        filename = os.path.join('results', '{}.png'.format(name[0]))
         color_file = Image.fromarray(colorize(output).transpose(1, 2, 0), 'RGB')
         color_file.save(filename)
 
         # show_all(gt, output)
         data_list.append([gt.flatten(), output.flatten()])
 
-    filename = os.path.join('results_fd', 'result.txt')
+    filename = os.path.join('results', 'result.txt')
     get_iou(data_list, args.num_classes, filename)
 
 
