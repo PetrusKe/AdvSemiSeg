@@ -45,7 +45,7 @@ INPUT_SIZE = '320,320'
 LEARNING_RATE = 2.5e-4 / 2
 MOMENTUM = 0.9
 NUM_CLASSES = 21
-NUM_STEPS = 20000
+NUM_STEPS = 40000
 POWER = 0.9
 RANDOM_SEED = 1234
 RESTORE_FROM = 'http://vllab1.ucmerced.edu/~whung/adv-semi-seg/resnet101COCO-41f33a49.pth'
@@ -440,7 +440,7 @@ def main():
         optimizer_D.step()
 
         print('exp = {}'.format(args.snapshot_dir))
-        print('iter = {0:8d}/{1:8d}, loss_seg = {2:.6f}, loss_adv_p = {3:.6f}, loss_D = {4:.6f}, loss_semi = {5:.6f}, loss_semi_adv = {6:.6f}'.format(i_iter, args.num_steps, loss_seg_value, loss_adv_pred_value, loss_D_value, loss_semi_value, loss_semi_adv_value))
+        print('iter = {0:8d}/{1:8d}, loss_seg = {2:.6f}, loss_adv_l = {3:.6f}, loss_D = {4:.6f}, loss_semi = {5:.6f}, loss_adv_u = {6:.6f}'.format(i_iter, args.num_steps, loss_seg_value, loss_adv_pred_value, loss_D_value, loss_semi_value, loss_semi_adv_value))
 
         if i_iter >= args.num_steps-1:
             torch.save(model.state_dict(),osp.join(args.snapshot_dir, 'VOC_'+str(args.num_steps)+'.pth'))

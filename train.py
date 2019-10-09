@@ -23,6 +23,10 @@ from dataset.voc_dataset import VOCDataSet, VOCGTDataSet
 
 
 
+from PIL import Image
+
+import matplotlib.pyplot as plt
+
 import matplotlib.pyplot as plt
 import random
 import timeit
@@ -31,17 +35,17 @@ start = timeit.default_timer()
 IMG_MEAN = np.array((104.00698793,116.66876762,122.67891434), dtype=np.float32)
 
 MODEL = 'DeepLab'
-BATCH_SIZE = 10
+BATCH_SIZE = int(10 / 2) 
 ITER_SIZE = 1
 NUM_WORKERS = 4
 DATA_DIRECTORY = './dataset/VOC2012'
 DATA_LIST_PATH = './dataset/voc_list/train_aug.txt'
 IGNORE_LABEL = 255
 INPUT_SIZE = '321,321'
-LEARNING_RATE = 2.5e-4
+LEARNING_RATE = 2.5e-4 / 2
 MOMENTUM = 0.9
 NUM_CLASSES = 21
-NUM_STEPS = 20000
+NUM_STEPS = 40000
 POWER = 0.9
 RANDOM_SEED = 1234
 RESTORE_FROM = 'http://vllab1.ucmerced.edu/~whung/adv-semi-seg/resnet101COCO-41f33a49.pth'
@@ -306,7 +310,7 @@ def main():
 
     for i_iter in range(args.num_steps):
 
-        if i_iter > 0 and i_iter % 1000 == 0:
+        if i_iter > 0 and i_iter % 10 == 0:
             val(model, args.gpu)
             model.train()
 
